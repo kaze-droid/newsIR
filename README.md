@@ -1,10 +1,9 @@
-# Semantic Search System using SENAN
+# Enhancing IR systems through Semantic Search System and Event Based Extraction
 
 ## Description
 
-This project implements a semantic search system for multilingual news articles across Southeast Asian languages.
-It leverages a [bi-encoder](https://huggingface.co/Kaze-droid/SENAN-Raw) finetuned for multilingual semantic embeddings and Elasticsearch to enable efficient retrieval of news content with event-based and date-based filtering capabilities.
-
+This project aims to enhance Information Retrieval Systems by integrating semantic search and event extraction techniques.
+It focuses on developing a multilingual semantic search system for Southeast Asian news articles using a fine-tuned [bi-encoder](https://huggingface.co/Kaze-droid/SENAN-Raw) for multilingual semantic embeddings enabling efficient retrieval. Additionally, a [token classification model](https://huggingface.co/Kaze-droid/event-extraction-tagger) is employed to extract and tag events within the article. Elasticsearch is then used to facilitate seamless storage, indxing and retrieval of the data.
 ## Prerequisites
 
 Ensure that Docker and Docker compose is installed
