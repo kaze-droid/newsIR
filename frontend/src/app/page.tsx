@@ -6,6 +6,10 @@ import { CaretSortIcon, CheckIcon } from "@radix-ui/react-icons"
 import { ExclamationTriangleIcon } from "@radix-ui/react-icons"
 import { SendIcon, SettingsIcon, SGFlag, MSFlag, IDFlag } from "@/components/lib/icons"
 
+import { addDays, format } from "date-fns"
+import { DateRange } from "react-day-picker"
+
+
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import {
@@ -50,12 +54,20 @@ import {
 } from "@/components/ui/tooltip"
 import {
   Tabs,
-  TabsContent, 
-  TabsList, 
+  TabsContent,
+  TabsList,
   TabsTrigger
 } from "@/components/ui/tabs"
-import { InputTags } from "@/components/ui/input-tags";
-import { url } from 'inspector'
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { DatePickerWithRange } from "@/components/ui/date-range-picker"
 
 const filters = [
   {
@@ -86,19 +98,26 @@ const LocationToFlag = {
   "Indonesia": <IDFlag />,
 }
 
+type TagCount = {
+  tag: string,
+  count: number
+}
+
 const API_URL: string = process.env.API_URL || 'http://localhost:8000';
 
 
 export default function Home() {
   const [open, setOpen] = useState<boolean>(false);
-  const [tags, setTags] = useState<string[]>([]);
+  const [tags, setTags] = useState<TagCount[]>([]);
   const [value, setValue] = useState<string>("");
+  const [date, setDate] = useState<DateRange | undefined>({from: new Date(2024, 1, 1), to: addDays(new Date(2024, 1, 1), 28)}); 
   const [sendHover, setSendHover] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [articleResults, setArticleResults] = useState<Article[]>([]);
 
   const urlRef = useRef<HTMLInputElement>(null);
   const filterRef = useRef<HTMLButtonElement>(null);
+  const DateRef = useRef<HTMLInputElement>(null);
 
   // Pagination for card results
   const cardsPerPage = 3;
@@ -149,23 +168,14 @@ export default function Home() {
     setArticleResults([...retrievedArticles]);
   }
 
-  const searchArticle = async () => {
-    if (tags.length === 0) {
-      setErrorMsg("Keywords cannot be empty!");
-      return;
-    }
+  const getTopTags = async () => {
+    // Get dates from the date picker
+    const start_date = format(date?.from as Date, "yyyy-MM-dd");
+    const end_date = format(date?.to as Date, "yyyy-MM-dd");
 
-    setStartIndex(0);
-    setErrorMsg("");
+    const endpoint = `${API_URL}/tags?${new URLSearchParams({ start_date: start_date , end_date: end_date, top_n: "25" }).toString()}`;
+    let retrievedTags: TagCount[] = [];
 
-    const searchParams = tags.map(tag => {
-      return new URLSearchParams({ keywords: tag }).toString();
-    });
-
-    const endpoint = `${API_URL}/search?${searchParams.join('&')}`;
-    let retrievedArticles: Article[] = [];
-
-    // Send GET request to the frontend
     try {
       const response = await fetch(endpoint,
         {
@@ -174,8 +184,8 @@ export default function Home() {
         });
 
       if (response.ok) {
-        retrievedArticles = await response.json();
-
+        retrievedTags = await response.json() as TagCount[];
+        setTags([...retrievedTags]);
       } else {
         setErrorMsg("Failed to get response from the server");
       }
@@ -184,20 +194,21 @@ export default function Home() {
       setErrorMsg(`${err}`);
     }
 
-    setArticleResults([...retrievedArticles]);
+    return retrievedTags; 
   }
+
 
   return (
     <div className='flex flex-col w-full h-full'>
-      <Tabs defaultValue="filter" className={`w-full ${articleResults.length>0 ? 'h-auto' : 'h-full'}`}>
+      <Tabs defaultValue="filter" className={`w-full ${articleResults.length > 0 ? 'h-auto' : 'h-full'}`}>
         <div className='flex w-full px-4 py-3 gap-x-3 justify-center'>
           <TabsList className="">
-            <TabsTrigger value="filter" onClick={() => {setArticleResults([]); setErrorMsg(''); setTags([]);}}>Filter Similar Articles</TabsTrigger>
-            <TabsTrigger value="query" onClick={() => {setArticleResults([]); setErrorMsg(''); setTags([]);}}>Search by Event</TabsTrigger>
+            <TabsTrigger value="filter" onClick={() => { setArticleResults([]); setErrorMsg(''); setTags([]); }}>Filter Similar Articles</TabsTrigger>
+            <TabsTrigger value="top_tags" onClick={() => { setArticleResults([]); setErrorMsg(''); setTags([]); }}>Get Top Tags</TabsTrigger>
           </TabsList>
-          </div>      
+        </div>
 
-        <TabsContent value="filter" className={`${articleResults.length>0 ? 'h-auto' : ''}`}>
+        <TabsContent value="filter" className={`${articleResults.length > 0 ? 'h-auto' : ''}`}>
           <div className='flex w-full px-4 pb-3 gap-x-3 justify-center items-center'>
             <SettingsIcon className='align-middle h-full' />
             <Input type='search' className='bg-[#262730] border-none w-[35rem] pl-9' placeholder='Enter URL here' ref={urlRef}></Input>
@@ -245,12 +256,11 @@ export default function Home() {
           </div>
         </TabsContent>
 
-        <TabsContent value="query">
-        <div className='flex w-full px-4 pb-3 gap-x-3 justify-center items-center'>
+        <TabsContent value="top_tags">
+          <div className='flex w-full px-4 pb-3 gap-x-3 justify-center items-center'>
             <SettingsIcon className={`align-middle h-full ${tags.length > 0 ? 'self-end pb-2' : ''}`} />
-            {/* <Input type='search' className='bg-[#262730] border-none w-[35rem] pl-9' placeholder='Enter keywords here' ref={urlRef}></Input> */}
-            <InputTags value={tags} onChange={setTags} className=' w-[35rem]' placeholder='Enter keywords here'></InputTags>
-            <Button variant="default" className={`bg-[#262730] hover:bg-[#262730] ${tags.length > 0 ? 'self-end' : ''}`} onMouseEnter={() => setSendHover(true)} onMouseLeave={() => setSendHover(false)} onClick={() => searchArticle()}>
+            <DatePickerWithRange className='bg-[#262730]' date={date} setDate={setDate}  />
+            <Button variant="default" className={`bg-[#262730] hover:bg-[#262730] ${tags.length > 0 ? 'self-end' : ''}`} onMouseEnter={() => setSendHover(true)} onMouseLeave={() => setSendHover(false)} onClick={() => getTopTags()}>
               <SendIcon className="" color={sendHover ? "#a75adb" : "#ffffff"} />
             </Button>
           </div>
@@ -259,7 +269,7 @@ export default function Home() {
 
       <div className={`flex w-full h-full ${errorMsg === "" ? "" : "justify-start"}`}>
         {errorMsg === "" ?
-          articleResults.length > 0 && <div className='flex flex-col h-full w-full mt-4'>
+          articleResults.length > 0 ? <div className='flex flex-col h-full w-full mt-4'>
             <div className='flex justify-evenly w-full h-[85%]'>
               {articleResults.slice(startIndex, startIndex + cardsPerPage).map((article, idx) => (
                 <Card className="w-96 max-h-96 mt-4 mb-2 flex flex-col bg-[#dfdfdf]" key={idx}>
@@ -323,6 +333,30 @@ export default function Home() {
 
               </PaginationContent>
             </Pagination>
+          </div>
+          :
+          
+          tags.length > 0 && 
+          <div className='flex w-full'>
+          <Table className='w-1/2 mx-auto'>
+            <TableCaption>List of Tags</TableCaption>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-92">Tags</TableHead>
+                <TableHead className="text-right">Count</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {
+              tags.map(({tag, count}, idx) => (
+                 <TableRow key={idx}>
+                    <TableCell>{tag}</TableCell>
+                    <TableCell className="text-right">{count}</TableCell>
+                  </TableRow> 
+              ))
+              }
+            </TableBody>
+          </Table>
           </div>
 
           :

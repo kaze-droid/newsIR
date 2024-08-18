@@ -3,9 +3,9 @@ from typing import List, Dict, Tuple, Annotated
 from datetime import datetime
 
 from app.services.elasticsearch import ElasticsearchService
-from app.models.article import Article
+from app.models import Article, Tag
+from datetime import datetime
 
-from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 router = APIRouter()
@@ -19,10 +19,16 @@ class URLNotFoundError(Exception):
         self.message = f"No article found with URL: {url}"
         super().__init__(self.message)
 
+
 class KeywordNotFoundError(Exception):
     def __init__(self, keywords: List[str]):
         self.keywords = keywords
         self.message = f"No articles found with keywords: {keywords}"
+        super().__init__(self.message)
+
+class TagAggregationError(Exception):
+    def __init__(self, start_date: str, end_date: str):
+        self.message = f"Error aggregating tags from {start_date} to {end_date}"
         super().__init__(self.message)
 
 
@@ -81,15 +87,38 @@ async def get_similar_articles(
 
 
 async def get_article_by_keywords(
-    keywords: Annotated[List[str], Query()], ES_Service: ElasticsearchService = Depends(get_es_service)
+    keywords: Annotated[List[str], Query()],
+    ES_Service: ElasticsearchService = Depends(get_es_service),
 ):
     query = {
         "query": {
             "bool": {
                 "should": [
-                    {"multi_match": {"query": keyword, "fields": ["content", "tags"], "operator": "and", "fuzziness": "2"}}
+                    item
                     for keyword in keywords
-                ]
+                    for item in [
+                        {"match_phrase": {"content": {"query": keyword, "boost": 3}}},
+                        {
+                            "match": {
+                                "content": {
+                                    "query": keyword,
+                                    "fuzziness": "AUTO",
+                                    "prefix_length": 2,
+                                }
+                            }
+                        },
+                        {
+                            "match": {
+                                "tags": {
+                                    "query": keyword,
+                                    "fuzziness": "AUTO",
+                                    "prefix_length": 2,
+                                }
+                            }
+                        },
+                    ]
+                ],
+                "minimum_should_match": 1,
             }
         }
     }
@@ -102,7 +131,80 @@ async def get_article_by_keywords(
     ):
         raise KeywordNotFoundError(keywords)
 
+    # Sort by the score
+    retrieved_articles["hits"]["hits"] = sorted(
+        retrieved_articles["hits"]["hits"], key=lambda x: x["_score"], reverse=True
+    )
+
     return retrieved_articles
+
+
+async def retrieve_tags(
+    start_date: str,
+    end_date: str,
+    ES_Service: ElasticsearchService = Depends(get_es_service),
+):
+    non_tags = [
+        "Singapore SINGAPORE",
+        "Star Media Group Berhad",
+        "KUALA LUMPUR",
+        "ST SINGAPORE",
+        "FILE SINGAPORE",
+        "Report it to us",
+        "Astro Awani",
+        "Report it",
+        "ST FILE SINGAPORE",
+        "pleaded guilty",
+        "pleading guilty",
+        "plead guilty",
+        "Astro AWANI",
+    ]
+
+    # Ensure the format is in yyyy-MM-dd
+    try:
+        start_date = datetime.strptime(start_date, "%Y-%m-%d")
+        end_date = datetime.strptime(end_date, "%Y-%m-%d")
+
+        if start_date > end_date:
+            raise HTTPException(
+                status_code=400,
+                detail="Start date is after end date. Please ensure start_date is before end_date",
+            )
+
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid date format. Please use yyyy-MM-dd format E.g. 2024-03-31",
+        )
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "must": [
+                    {"range": {"date_obj": {"gte": start_date, "lte": end_date}}}
+                ],
+                "must_not": [
+                    {"regexp": {"tags": "[\s\S]*\d+-D[\s\S]*"}},
+                    {"regexp": {"tags": "\d+"}},
+                    {"terms": {"tags": non_tags}},
+                ],
+            }
+        },
+        "aggs": {"tags": {"terms": {"field": "tags", "size": 1000}}},
+    }
+
+    retrieved_tags = ES_Service.search_document(query=query)
+    if (
+        not retrieved_tags
+        or "hits" not in retrieved_tags
+        or retrieved_tags["hits"]["total"]["value"] == 0
+    ):
+        raise TagAggregationError(start_date, end_date)
+    
+    tags = retrieved_tags['aggregations']['tags']['buckets']
+    return tags
+
 
 
 @router.get("/filter/date", tags=["filter"])
@@ -219,14 +321,42 @@ async def keywordSearch(
 
     retrieved_articles_results = ES_Service.get_fields(
         response=retrieved_articles,
-        fields=["url", "title", "content", "language", "location", "site", "date", "tags"],
+        fields=[
+            "url",
+            "title",
+            "content",
+            "language",
+            "location",
+            "site",
+            "date",
+            "tags",
+        ],
     )
 
     if not retrieved_articles_results:
         raise HTTPException(status_code=404, detail="No articles found")
-    
+
     logger.info(f"Retrieved articles: {retrieved_articles_results}")
     return [Article(**article) for article in retrieved_articles_results]
+
+@router.get("/tags", tags=["tags"])
+async def get_tags(
+    start_date: str = "2024-05-01",
+    end_date: str = "2024-06-30",
+    top_n: int = 25,
+    tags_data: Tuple[Dict, Dict] = Depends(retrieve_tags),
+    ES_Service: ElasticsearchService = Depends(get_es_service),
+):
+    tags = tags_data
+    if len(tags) == 0:
+        raise HTTPException(status_code=404, detail="No tags found")
+    
+    if top_n > len(tags):
+        top_n = len(tags)
+
+    tags = tags[:top_n]
+    return [Tag(tag=item['key'], count=item['doc_count']) for item in tags]
+
 
 @router.get("/health")
 async def health_check():
